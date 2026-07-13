@@ -1,13 +1,14 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 # Triage Schemas
 class TriageRequest(BaseModel):
     symptoms: str
     is_offline: bool = False
+    mock: bool = False
 
 class TriageResponse(BaseModel):
-    urgency: str  # "High", "Medium", "Low"
+    urgency: Literal["High", "Medium", "Low"]
     action_steps: List[str]
 
 # MediScan Schemas
@@ -16,6 +17,7 @@ class MedicineDetail(BaseModel):
     dosage: str
     timing: str
     instructions: str
+    purpose_urdu: str
 
 class MediScanResponse(BaseModel):
     medicines: List[MedicineDetail]
@@ -24,12 +26,13 @@ class MediScanResponse(BaseModel):
 class Biomarker(BaseModel):
     name: str
     value: str
-    status: str # "Normal", "High", "Low"
+    status: Literal["Normal", "High", "Low"]
 
 class LabSenseResponse(BaseModel):
-    out_of_range_biomarkers: List[Biomarker]
+    biomarkers: List[Biomarker]
     summary_explanation: str
     dietary_advice: str
+    diet_plan: List[dict]
 
 # NutriScan Schemas
 class NutriScanResponse(BaseModel):
@@ -37,3 +40,4 @@ class NutriScanResponse(BaseModel):
     estimated_calories: int
     glycemic_safety_score: str # e.g. "Low Risk", "High Risk"
     advice: str
+

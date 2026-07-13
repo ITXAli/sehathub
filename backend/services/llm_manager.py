@@ -103,7 +103,9 @@ class LLMManager:
             raise HTTPException(status_code=500, detail=f"Google Cloud API Error: {str(e)}")
 
     @staticmethod
-    def process_triage(symptoms: str, is_offline: bool) -> dict:
+    def process_triage(symptoms: str, is_offline: bool, mock: bool = False) -> dict:
+        if mock or os.getenv("MOCK_MODE", "").lower() == "true":
+            return LLMManager._get_mock_response("TriageResponse")
         prompt = f"""Analyze these symptoms: {symptoms}. Classify urgency (High, Medium, Low) and provide action steps.
 You must return exactly this JSON structure:
 {{
@@ -115,8 +117,10 @@ You must return exactly this JSON structure:
         return LLMManager._call_google_cloud(prompt, "TriageResponse")
 
     @staticmethod
-    def process_mediscan(image_bytes: bytes, mime_type: str, is_offline: bool) -> dict:
-        prompt = """Read this prescription and extract ALL medicines including their name, dosage, timing, and instructions.
+    def process_mediscan(image_bytes: bytes, mime_type: str, is_offline: bool, mock: bool = False) -> dict:
+        if mock or os.getenv("MOCK_MODE", "").lower() == "true":
+            return LLMManager._get_mock_response("MediScanResponse")
+        prompt = """Read this prescription and extract ALL medicines including their name, dosage, timing, instructions, and translation of the medicine's purpose in Urdu script.
 You must return exactly this JSON structure:
 {
     "medicines": [
@@ -124,7 +128,8 @@ You must return exactly this JSON structure:
             "medicine_name": "extracted name",
             "dosage": "extracted dosage",
             "timing": "extracted timing",
-            "instructions": "extracted instructions"
+            "instructions": "extracted instructions",
+            "purpose_urdu": "Urdu script detailing the medicine's main purpose (e.g., 'بخار اور درد کے لیے')"
         }
     ]
 }"""
@@ -133,22 +138,42 @@ You must return exactly this JSON structure:
         return LLMManager._call_google_cloud(prompt, "MediScanResponse", image_bytes, mime_type)
 
     @staticmethod
-    def process_labsense(image_bytes: bytes, mime_type: str, is_offline: bool) -> dict:
-        prompt = """Analyze this lab report. Identify out-of-range biomarkers and summarize them in simple terms with dietary advice.
+    def process_labsense(image_bytes: bytes, mime_type: str, is_offline: bool, mock: bool = False) -> dict:
+        if mock or os.getenv("MOCK_MODE", "").lower() == "true":
+            return LLMManager._get_mock_response("LabSenseResponse")
+        
+        from services.nutrition_data import PAKISTANI_FOODS
+        allowed_foods = ", ".join([f["name"] for f in PAKISTANI_FOODS])
+        
+        prompt = f"""Analyze this lab report. Identify ALL biomarkers (including low, high, and normal values) and status them (Normal, High, or Low).
+Also provide a 7-day personalized diet plan that is built ONLY from the following allowed Pakistani foods list:
+[{allowed_foods}]
+
 You must return exactly this JSON structure:
 {{
-    "out_of_range_biomarkers": [
-        {{"name": "marker name", "value": "value", "status": "High/Low/Abnormal"}}
+    "biomarkers": [
+        {{"name": "marker name", "value": "value", "status": "Normal/High/Low"}}
     ],
-    "summary_explanation": "simple explanation",
-    "dietary_advice": "dietary advice"
+    "summary_explanation": "simple explanation of the findings",
+    "dietary_advice": "general dietary advice based on findings",
+    "diet_plan": [
+        {{"day": "Day 1", "meals_summary": "Breakfast, lunch, dinner and snacks using only the allowed foods"}},
+        {{"day": "Day 2", "meals_summary": "..."}},
+        {{"day": "Day 3", "meals_summary": "..."}},
+        {{"day": "Day 4", "meals_summary": "..."}},
+        {{"day": "Day 5", "meals_summary": "..."}},
+        {{"day": "Day 6", "meals_summary": "..."}},
+        {{"day": "Day 7", "meals_summary": "..."}}
+    ]
 }}"""
         if is_offline:
             return LLMManager._call_ollama(prompt, "LabSenseResponse")
         return LLMManager._call_google_cloud(prompt, "LabSenseResponse", image_bytes, mime_type)
         
     @staticmethod
-    def process_nutriscan(image_bytes: bytes, mime_type: str, is_offline: bool) -> dict:
+    def process_nutriscan(image_bytes: bytes, mime_type: str, is_offline: bool, mock: bool = False) -> dict:
+        if mock or os.getenv("MOCK_MODE", "").lower() == "true":
+            return LLMManager._get_mock_response("NutriScanResponse")
         prompt = """Identify the food in this image. Estimate calories, provide a glycemic safety score for diabetics, and give brief advice.
 You must return exactly this JSON structure:
 {{
@@ -170,18 +195,41 @@ You must return exactly this JSON structure:
                 "action_steps": ["Refer to nearest hospital immediately.", "Administer paracetamol if fever > 101F."]
             },
             "MediScanResponse": {
-                "medicine_name": "Augmentin",
-                "dosage": "625mg",
-                "timing": "Twice a day",
-                "instructions": "Take after meals for 5 days."
+                "medicines": [
+                    {
+                        "medicine_name": "Augmentin",
+                        "dosage": "625mg",
+                        "timing": "Twice a day",
+                        "instructions": "Take after meals for 5 days.",
+                        "purpose_urdu": "انفیکشن کے علاج کے لیے (اینٹی بائیوٹک)"
+                    },
+                    {
+                        "medicine_name": "Panadol",
+                        "dosage": "500mg",
+                        "timing": "Three times a day",
+                        "instructions": "Take as needed for pain or fever.",
+                        "purpose_urdu": "بخار اور درد کو کم کرنے کے لیے"
+                    }
+                ]
             },
             "LabSenseResponse": {
-                "out_of_range_biomarkers": [
+                "biomarkers": [
                     {"name": "Hemoglobin", "value": "10.2 g/dL", "status": "Low"},
-                    {"name": "Cholesterol", "value": "240 mg/dL", "status": "High"}
+                    {"name": "Cholesterol", "value": "240 mg/dL", "status": "High"},
+                    {"name": "Blood Glucose", "value": "90 mg/dL", "status": "Normal"},
+                    {"name": "Iron", "value": "35 mcg/dL", "status": "Low"}
                 ],
-                "summary_explanation": "Your blood oxygen carrier (Hemoglobin) is low, and your cholesterol is slightly high.",
-                "dietary_advice": "Eat more iron-rich foods like spinach and lean meat. Reduce fried foods."
+                "summary_explanation": "Your blood oxygen carrier (Hemoglobin) and Iron are low, and your cholesterol is slightly high.",
+                "dietary_advice": "Eat more iron-rich foods like spinach and whole wheat roti. Reduce oil and ghee.",
+                "diet_plan": [
+                    {"day": "Day 1", "meals_summary": "Breakfast: Boiled Egg & Chapati (Whole Wheat). Lunch: Daal Mong/Masoor with Salad. Dinner: Palak Paneer & Chapati (Whole Wheat). Snack: Apple."},
+                    {"day": "Day 2", "meals_summary": "Breakfast: Egg Omelette & Paratha. Lunch: Lobia (Black-eyed peas curry). Dinner: Chicken Salan & Tandoori Roti. Snack: Dates."},
+                    {"day": "Day 3", "meals_summary": "Breakfast: Yogurt & Banana. Lunch: Daal Mash & Chapati. Dinner: Seekh Kebab & Cucumber Salad. Snack: Almonds."},
+                    {"day": "Day 4", "meals_summary": "Breakfast: Boiled Egg & Chapati. Lunch: Chana Masala with salad. Dinner: Chicken Biryani with Raita. Snack: Guava."},
+                    {"day": "Day 5", "meals_summary": "Breakfast: Egg Omelette & Chapati. Lunch: Lobia leftover. Dinner: Fried Fish & Cucumber Salad. Snack: Walnuts."},
+                    {"day": "Day 6", "meals_summary": "Breakfast: Yogurt & Apples. Lunch: Chicken Pulao. Dinner: Beef Keema & Tandoori Roti. Snack: Orange."},
+                    {"day": "Day 7", "meals_summary": "Breakfast: Boiled Egg & Paratha. Lunch: Aloo Palak & Chapati. Dinner: Kofta Curry & Tandoori Roti. Snack: Pista."}
+                ]
             },
             "NutriScanResponse": {
                 "food_identified": "Chicken Biryani",
@@ -191,3 +239,4 @@ You must return exactly this JSON structure:
             }
         }
         return mocks.get(schema_name, {})
+
